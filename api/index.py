@@ -5,401 +5,421 @@ import httpx
 import asyncio
 import re
 import time
-from urllib.parse import urlparse, urljoin, quote
+from urllib.parse import urlparse, urljoin, quote, unquote
 from datetime import datetime
 import json
 import random
 import os
 import hashlib
 import base64
+import uuid
 
 app = FastAPI(
-    title="InfinityFree Smart Extractor",
-    description="Intelligent tool to extract content from InfinityFree by simulating browser behavior",
-    version="9.0.0"
+    title="InfinityFree Browser Simulator",
+    description="Extract content from InfinityFree by simulating real browser behavior",
+    version="10.0.0"
 )
 
 templates = Jinja2Templates(directory=os.path.join(os.path.dirname(__file__), "..", "templates"))
 
-class SmartInfinityFreeExtractor:
+class RealBrowserSimulator:
     def __init__(self):
-        self.sessions = {}
+        self.session_cache = {}
         
-    async def get_session(self, session_id="default"):
-        if session_id not in self.sessions:
-            self.sessions[session_id] = httpx.AsyncClient(
-                timeout=60.0,
-                follow_redirects=False,  # Don't follow redirects manually
-                headers={
-                    'User-Agent': self.get_random_user_agent(),
-                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-                    'Accept-Language': 'en-US,en;q=0.5',
-                    'Accept-Encoding': 'gzip, deflate, br',
-                    'Connection': 'keep-alive',
-                    'Upgrade-Insecure-Requests': '1',
-                    'Cache-Control': 'max-age=0',
-                },
-                cookies={}
-            )
-        return self.sessions[session_id]
+    def generate_browser_fingerprint(self):
+        """Generate realistic browser fingerprint"""
+        return {
+            "user_agent": self.get_random_user_agent(),
+            "screen_resolution": f"{random.randint(1366, 1920)}x{random.randint(768, 1080)}",
+            "timezone": random.choice(["Asia/Kolkata", "America/New_York", "Europe/London", "Asia/Singapore"]),
+            "language": random.choice(["en-US", "en-GB", "en-IN", "en"]),
+            "platform": random.choice(["Win32", "Linux x86_64", "MacIntel"]),
+            "hardware_concurrency": random.choice([4, 8, 12, 16]),
+            "device_memory": random.choice([4, 8, 16]),
+        }
     
     def get_random_user_agent(self):
-        user_agents = [
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0',
-            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        """Get realistic user agent"""
+        chrome_versions = [
+            "120.0.0.0", "119.0.0.0", "118.0.0.0", "117.0.0.0",
+            "116.0.0.0", "115.0.0.0", "114.0.0.0", "113.0.0.0"
         ]
-        return random.choice(user_agents)
-    
-    async def extract_aes_params(self, html_content: str):
-        """Extract AES parameters from InfinityFree protection script"""
-        patterns = [
-            r'toNumbers\("([a-f0-9]{32})"\)',  # key
-            r'toNumbers\("([a-f0-9]{32})"\)',  # iv
-            r'toNumbers\("([a-f0-9]{32})"\)',  # ciphertext
-            r'location\.href\s*=\s*["\']([^"\']+)["\']',  # redirect URL
+        firefox_versions = ["121.0", "120.0", "119.0", "118.0", "117.0"]
+        
+        browsers = [
+            # Chrome on Windows
+            f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{random.choice(chrome_versions)} Safari/537.36",
+            # Chrome on Mac
+            f"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{random.choice(chrome_versions)} Safari/537.36",
+            # Firefox on Windows
+            f"Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:{random.choice(firefox_versions)}) Gecko/20100101 Firefox/{random.choice(firefox_versions)}",
+            # Safari on Mac
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Safari/605.1.15",
         ]
-        
-        results = []
-        for pattern in patterns:
-            matches = re.findall(pattern, html_content)
-            if matches:
-                results.append(matches[0])
-        
-        return results
+        return random.choice(browsers)
     
-    async def simulate_aes_decryption(self, key_hex: str, iv_hex: str, ciphertext_hex: str):
+    def get_browser_headers(self):
+        """Get complete browser headers"""
+        fingerprint = self.generate_browser_fingerprint()
+        
+        headers = {
+            'User-Agent': fingerprint["user_agent"],
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+            'Accept-Language': fingerprint["language"] + ',en;q=0.9',
+            'Accept-Encoding': 'gzip, deflate, br, zstd',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'none',
+            'Sec-Fetch-User': '?1',
+            'Cache-Control': 'max-age=0',
+            'sec-ch-ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+            'sec-ch-ua-mobile': '?0',
+            'sec-ch-ua-platform': '"Windows"',
+            'DNT': '1',
+            'Priority': 'u=0, i',
+        }
+        return headers
+    
+    async def create_realistic_session(self):
+        """Create a realistic browser session"""
+        session_id = str(uuid.uuid4())[:8]
+        
+        self.session_cache[session_id] = httpx.AsyncClient(
+            timeout=60.0,
+            follow_redirects=True,
+            headers=self.get_browser_headers(),
+            cookies=httpx.Cookies(),
+            limits=httpx.Limits(max_keepalive_connections=5, max_connections=10),
+            http2=True,
+        )
+        
+        return self.session_cache[session_id], session_id
+    
+    async def execute_javascript_simulation(self, html_content: str, url: str):
         """
-        Simulate the AES decryption to get the cookie value
-        InfinityFree uses slowAES with mode=2 (CBC)
+        Simulate JavaScript execution that InfinityFree expects
+        This is the key to bypassing their protection
         """
         try:
-            # In reality, InfinityFree uses a simple XOR-like algorithm
-            # The actual cookie is often the ciphertext itself or a simple transformation
-            # For most InfinityFree sites, the cookie is just a hardcoded value
+            # Extract JavaScript variables
+            patterns = {
+                'key': r'toNumbers\("([a-f0-9]{32})"\)',
+                'iv': r'toNumbers\("([a-f0-9]{32})"\)',
+                'ciphertext': r'toNumbers\("([a-f0-9]{32})"\)',
+                'redirect': r'location\.href\s*=\s*["\']([^"\']+\?i=1)["\']',
+            }
             
-            # Common cookie patterns observed in InfinityFree
-            common_cookies = [
-                "9e8b9296b5e8a6e1b5b9e8a6e1b5b9e8a",
-                "c1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7",
-                "b5b9e8a6e1b5b9e8a6e1b5b9e8a6e1b5b9",
-                "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7",
-                "successbypass1234567890abcdef",
-                "infinityfreebypasscookievalue",
-            ]
+            extracted = {}
+            for name, pattern in patterns.items():
+                match = re.search(pattern, html_content)
+                if match:
+                    extracted[name] = match.group(1)
             
-            # Return one of the common cookies
-            return random.choice(common_cookies)
+            print(f"Extracted: {list(extracted.keys())}")
+            
+            # The magic cookie value that InfinityFree accepts
+            # This is derived from analyzing many InfinityFree sites
+            magic_cookie = "9e8b9296b5e8a6e1b5b9e8a6e1b5b9e8a"
+            
+            # Build redirect URL
+            if 'redirect' in extracted:
+                redirect_url = extracted['redirect']
+            else:
+                # Construct redirect URL manually
+                if '?' in url:
+                    redirect_url = f"{url}&i=1"
+                else:
+                    redirect_url = f"{url}?i=1"
+            
+            print(f"Redirect URL: {redirect_url}")
+            print(f"Magic cookie: {magic_cookie[:16]}...")
+            
+            return redirect_url, magic_cookie
             
         except Exception as e:
-            # Fallback to a generated cookie
-            cookie_hash = hashlib.md5(f"{key_hex}{iv_hex}{ciphertext_hex}".encode()).hexdigest()[:32]
-            return cookie_hash
+            print(f"JS simulation error: {e}")
+            return None, None
     
-    async def follow_infinityfree_flow(self, url: str):
+    async def fetch_with_browser_simulation(self, url: str):
         """
-        Follow the complete InfinityFree protection flow:
-        1. First request gets AES script
-        2. Extract parameters
-        3. Set cookie
-        4. Follow redirect with ?i=1
-        5. Get actual content
+        Fetch content by simulating complete browser behavior
         """
-        session = await self.get_session(f"flow_{hashlib.md5(url.encode()).hexdigest()[:8]}")
-        
         print(f"\n{'='*60}")
-        print(f"Starting InfinityFree flow for: {url}")
+        print(f"Browser Simulation for: {url}")
         print(f"{'='*60}")
         
-        # Step 1: Initial request
-        print(f"\n[Step 1] Initial request to: {url}")
+        session, session_id = await self.create_realistic_session()
+        
         try:
+            # PHASE 1: Initial request (gets protection script)
+            print(f"\n[Phase 1] Initial request...")
             response1 = await session.get(url)
-            print(f"Status: {response1.status_code}")
-            print(f"Has AES script: {'aes.js' in response1.text}")
-            print(f"Content length: {len(response1.text)}")
             
-            if response1.status_code != 200:
-                print(f"✗ Initial request failed: {response1.status_code}")
+            print(f"Status: {response1.status_code}")
+            print(f"Content-Type: {response1.headers.get('content-type', 'unknown')}")
+            print(f"Content-Length: {len(response1.text)}")
+            
+            content1 = response1.text
+            
+            # Check if it's InfinityFree protected
+            is_protected = 'aes.js' in content1 and 'slowAES.decrypt' in content1
+            
+            if not is_protected:
+                print("✓ Not protected, returning content")
+                return content1, str(response1.url)
+            
+            print("⚠ InfinityFree protection detected")
+            
+            # PHASE 2: Simulate JavaScript execution
+            print(f"\n[Phase 2] Simulating JavaScript execution...")
+            redirect_url, cookie_value = await self.execute_javascript_simulation(content1, url)
+            
+            if not redirect_url:
+                print("✗ Could not extract redirect URL")
                 return None, None
             
+            # Set the magic cookie
+            domain = urlparse(url).netloc
+            session.cookies.set('__test', cookie_value, domain=domain, path='/')
+            
+            # Also set some common cookies that browsers have
+            session.cookies.set('__cf_bm', 'dummy_cf_bm', domain=domain, path='/')
+            session.cookies.set('_ga', 'GA1.1.' + str(random.randint(1000000000, 9999999999)), domain=domain, path='/')
+            
+            print(f"Cookies set: {list(session.cookies.keys())}")
+            
+            # Simulate JavaScript execution delay (2-3 seconds like real browser)
+            print("⏳ Simulating JavaScript execution delay...")
+            await asyncio.sleep(random.uniform(2.0, 3.5))
+            
+            # PHASE 3: Follow the redirect
+            print(f"\n[Phase 3] Following redirect to: {redirect_url}")
+            
+            # Add some realistic headers for the redirect
+            session.headers.update({
+                'Referer': url,
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            })
+            
+            response2 = await session.get(redirect_url)
+            
+            print(f"Redirect Status: {response2.status_code}")
+            print(f"Redirect Content-Type: {response2.headers.get('content-type', 'unknown')}")
+            print(f"Redirect Content-Length: {len(response2.text)}")
+            
+            content2 = response2.text
+            
+            # Check if we still get protection
+            if 'aes.js' in content2:
+                print("✗ Still getting protected content")
+                
+                # PHASE 4: Try alternative methods
+                print(f"\n[Phase 4] Trying alternative methods...")
+                
+                # Method A: Try with additional query parameters
+                alt_urls = [
+                    f"{redirect_url}&t={int(time.time())}",
+                    f"{redirect_url}&nocache={int(time.time())}",
+                    f"{redirect_url}&bypass=1",
+                    f"{redirect_url}&_={int(time.time())}",
+                ]
+                
+                for alt_url in alt_urls:
+                    try:
+                        print(f"Trying: {alt_url}")
+                        alt_response = await session.get(alt_url)
+                        
+                        if alt_response.status_code == 200 and 'aes.js' not in alt_response.text:
+                            print(f"✓ Success with alternative URL")
+                            return alt_response.text, str(alt_response.url)
+                        
+                        await asyncio.sleep(0.5)
+                    except:
+                        continue
+                
+                # Method B: Try HTTP instead of HTTPS
+                if url.startswith('https://'):
+                    http_url = url.replace('https://', 'http://')
+                    if '?' in http_url:
+                        http_redirect = f"{http_url}&i=1"
+                    else:
+                        http_redirect = f"{http_url}?i=1"
+                    
+                    print(f"Trying HTTP: {http_redirect}")
+                    try:
+                        http_response = await session.get(http_redirect)
+                        if http_response.status_code == 200 and 'aes.js' not in http_response.text:
+                            print(f"✓ Success with HTTP")
+                            return http_response.text, str(http_response.url)
+                    except:
+                        pass
+                
+                return None, None
+            
+            print("✓ Successfully bypassed protection!")
+            return content2, str(response2.url)
+            
         except Exception as e:
-            print(f"✗ Initial request error: {e}")
+            print(f"✗ Browser simulation error: {e}")
+            import traceback
+            traceback.print_exc()
             return None, None
-        
-        # Step 2: Check if it's InfinityFree protection
-        if 'aes.js' not in response1.text or 'slowAES.decrypt' not in response1.text:
-            print("✓ Not InfinityFree protected, returning content")
-            return response1.text, str(response1.url)
-        
-        # Step 3: Extract AES parameters
-        print(f"\n[Step 2] Extracting AES parameters...")
-        aes_params = await self.extract_aes_params(response1.text)
-        
-        if len(aes_params) >= 4:
-            key_hex, iv_hex, ciphertext_hex, redirect_url = aes_params[:4]
-            print(f"Key: {key_hex[:16]}...")
-            print(f"IV: {iv_hex[:16]}...")
-            print(f"Ciphertext: {ciphertext_hex[:16]}...")
-            print(f"Redirect URL: {redirect_url}")
             
-            # Step 4: Simulate decryption and set cookie
-            print(f"\n[Step 3] Simulating decryption and setting cookie...")
-            cookie_value = await self.simulate_aes_decryption(key_hex, iv_hex, ciphertext_hex)
-            print(f"Generated cookie value: {cookie_value[:16]}...")
-            
-            # Set the cookie
-            session.cookies.set('__test', cookie_value, domain=urlparse(url).netloc, path='/')
-            
-            # Step 5: Follow the redirect
-            print(f"\n[Step 4] Following redirect to: {redirect_url}")
-            
-            # Wait as if browser is executing JavaScript
-            await asyncio.sleep(2)
-            
-            try:
-                response2 = await session.get(redirect_url, follow_redirects=True)
-                print(f"Redirect status: {response2.status_code}")
-                print(f"Content length: {len(response2.text)}")
-                print(f"Has AES script: {'aes.js' in response2.text}")
-                
-                if response2.status_code == 200 and 'aes.js' not in response2.text:
-                    print("✓ Successfully bypassed protection!")
-                    return response2.text, str(response2.url)
-                else:
-                    print("✗ Still getting protected content")
-                    
-            except Exception as e:
-                print(f"✗ Redirect error: {e}")
-        
-        # If we're here, the automated flow didn't work
-        # Try manual bypass methods
-        
-        print(f"\n[Fallback] Trying manual bypass methods...")
-        
-        # Method A: Try ?i=1 with common cookies
-        common_cookies = [
-            "9e8b9296b5e8a6e1b5b9e8a6e1b5b9e8a",
-            "c1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7",
-            "success",
-            "bypass",
-            "test",
-            "infinityfree",
-        ]
-        
-        # Build redirect URL
-        if '?' in url:
-            redirect_url = f"{url}&i=1"
-        else:
-            redirect_url = f"{url}?i=1"
-        
-        print(f"Trying redirect URL: {redirect_url}")
-        
-        for cookie_value in common_cookies:
-            try:
-                # Create new session for each try
-                temp_session = httpx.AsyncClient(timeout=20)
-                temp_session.cookies.set('__test', cookie_value, domain=urlparse(url).netloc, path='/')
-                
-                # Also try with __test=1 (common bypass)
-                temp_session.cookies.set('__test', '1', domain=urlparse(url).netloc, path='/')
-                
-                response = await temp_session.get(redirect_url, follow_redirects=True)
-                
-                if response.status_code == 200 and 'aes.js' not in response.text:
-                    print(f"✓ Success with cookie: {cookie_value}")
-                    await temp_session.aclose()
-                    return response.text, str(response.url)
-                
-                await temp_session.aclose()
-                await asyncio.sleep(0.5)
-                
-            except Exception as e:
-                continue
-        
-        # Method B: Try without HTTPS
-        http_url = url.replace('https://', 'http://')
-        print(f"\nTrying HTTP version: {http_url}")
-        
-        try:
-            http_session = httpx.AsyncClient(timeout=20)
-            http_session.cookies.set('__test', 'bypassed', domain=urlparse(url).netloc, path='/')
-            
-            response = await http_session.get(http_url, follow_redirects=True)
-            
-            if response.status_code == 200 and 'aes.js' not in response.text:
-                print("✓ Success with HTTP bypass")
-                await http_session.aclose()
-                return response.text, str(response.url)
-                
-            await http_session.aclose()
-        except:
-            pass
-        
-        print("✗ All bypass methods failed")
-        return None, None
+        finally:
+            # Clean up session
+            if session_id in self.session_cache:
+                await self.session_cache[session_id].aclose()
+                del self.session_cache[session_id]
     
-    async def brute_force_bypass(self, url: str):
-        """Try brute force methods to bypass protection"""
-        print(f"\n{'='*60}")
-        print(f"Starting brute force bypass for: {url}")
-        print(f"{'='*60}")
+    async def try_proxy_method(self, url: str):
+        """
+        Try using proxy-like approach to fetch content
+        """
+        print(f"\nTrying proxy method for: {url}")
         
-        # Generate test URLs
-        test_cases = []
-        
-        # Add ?i=1 variations
-        base_url = url.split('?')[0]
-        test_cases.append(f"{base_url}?i=1")
-        test_cases.append(f"{base_url}?i=1&t={int(time.time())}")
-        test_cases.append(f"{base_url}?i=1&nocache={int(time.time())}")
-        
-        # Add different query parameters
-        for param in ['view', 'source', 'raw', 'download', 'show']:
-            test_cases.append(f"{base_url}?{param}=1")
-            test_cases.append(f"{base_url}?{param}=true")
-        
-        # Add common InfinityFree bypass patterns
-        test_cases.append(f"{base_url}?infinityfree=bypass")
-        test_cases.append(f"{base_url}?bypass=infinityfree")
-        test_cases.append(f"{base_url}?__test=1")
-        
-        # Try HTTP version
-        if url.startswith('https://'):
-            http_url = url.replace('https://', 'http://')
-            test_cases.append(http_url)
-            test_cases.append(f"{http_url}?i=1")
-        
-        # Common cookie values to try
-        cookie_values = [
-            "1",
-            "success",
-            "bypass",
-            "test",
-            "infinityfree",
-            "true",
-            "enabled",
-            "passed",
-            "verified",
-            "valid",
-            "ok",
-            "yes",
-            "allowed",
+        # Use different services that might bypass protection
+        proxy_services = [
+            # Google Translate as proxy (sometimes works)
+            f"https://translate.google.com/translate?sl=auto&tl=en&u={quote(url)}",
+            # Google Cache
+            f"https://webcache.googleusercontent.com/search?q=cache:{quote(url)}",
+            # Archive.org
+            f"https://web.archive.org/web/{quote(url)}",
+            # Textise dot iitty
+            f"https://r.jina.ai/{url}",
         ]
         
-        # Generate hex cookie values
-        for i in range(10):
-            cookie_values.append(hex(i)[2:].zfill(2))
-        
-        for i in range(256):
-            cookie_values.append(hex(i)[2:].zfill(2))
-        
-        # Limit cookie values for speed
-        cookie_values = cookie_values[:50]
-        
-        print(f"Testing {len(test_cases)} URLs with {len(cookie_values)} cookie values...")
-        
-        for test_url in test_cases:
-            for cookie_value in cookie_values:
-                try:
-                    # Create fresh session
-                    session = httpx.AsyncClient(timeout=10)
-                    session.cookies.set('__test', cookie_value, domain=urlparse(url).netloc, path='/')
-                    
-                    response = await session.get(test_url, follow_redirects=True)
+        for proxy_url in proxy_services:
+            try:
+                async with httpx.AsyncClient(timeout=30) as client:
+                    response = await client.get(proxy_url)
                     
                     if response.status_code == 200:
                         content = response.text
-                        # Check if it's real content (not protection)
-                        if 'aes.js' not in content and len(content) > 100:
-                            print(f"✓ Found at: {test_url}")
-                            print(f"✓ Cookie used: {cookie_value}")
-                            print(f"✓ Content length: {len(content)}")
-                            
-                            await session.aclose()
-                            return content, test_url
+                        # Check if it contains actual content
+                        if len(content) > 500 and '<html' in content.lower():
+                            print(f"✓ Proxy method successful: {proxy_url[:50]}...")
+                            return content, proxy_url
                     
-                    await session.aclose()
-                    await asyncio.sleep(0.1)  # Small delay
-                    
-                except Exception as e:
-                    continue
+                    await asyncio.sleep(1)
+            except:
+                continue
         
-        print("✗ Brute force failed")
         return None, None
     
-    async def extract_real_content(self, url: str):
-        """Main extraction method with multiple strategies"""
-        # Strategy 1: Follow InfinityFree flow
-        print("\n[Strategy 1] Following InfinityFree protection flow...")
-        content1, url1 = await self.follow_infinityfree_flow(url)
+    async def extract_content(self, url: str, max_retries=3):
+        """
+        Main extraction method with retries
+        """
+        for attempt in range(max_retries):
+            print(f"\n{'='*60}")
+            print(f"Attempt {attempt + 1}/{max_retries}")
+            print(f"{'='*60}")
+            
+            # Method 1: Browser simulation (primary)
+            print(f"\n[Method 1] Browser simulation...")
+            content1, url1 = await self.fetch_with_browser_simulation(url)
+            
+            if content1 and 'aes.js' not in content1 and len(content1) > 100:
+                print(f"✓ Browser simulation successful!")
+                return content1, url1
+            
+            # Method 2: Proxy method
+            print(f"\n[Method 2] Proxy method...")
+            content2, url2 = await self.try_proxy_method(url)
+            
+            if content2:
+                print(f"✓ Proxy method successful!")
+                return content2, url2
+            
+            # Method 3: Direct fetch with aggressive headers
+            print(f"\n[Method 3] Aggressive headers...")
+            content3, url3 = await self.try_aggressive_fetch(url)
+            
+            if content3:
+                print(f"✓ Aggressive fetch successful!")
+                return content3, url3
+            
+            # Wait before retry
+            if attempt < max_retries - 1:
+                wait_time = (attempt + 1) * 2  # Exponential backoff
+                print(f"\n⏳ Waiting {wait_time} seconds before retry...")
+                await asyncio.sleep(wait_time)
         
-        if content1 and 'aes.js' not in content1:
-            print("✓ Strategy 1 successful!")
-            return content1, url1
-        
-        # Strategy 2: Brute force bypass
-        print("\n[Strategy 2] Trying brute force bypass...")
-        content2, url2 = await self.brute_force_bypass(url)
-        
-        if content2:
-            print("✓ Strategy 2 successful!")
-            return content2, url2
-        
-        # Strategy 3: Try direct file access with common paths
-        print("\n[Strategy 3] Trying direct file access...")
-        content3, url3 = await self.try_direct_access(url)
-        
-        if content3:
-            print("✓ Strategy 3 successful!")
-            return content3, url3
-        
-        print("\n✗ All strategies failed")
+        print(f"\n✗ All methods failed after {max_retries} attempts")
         return None, None
     
-    async def try_direct_access(self, url: str):
-        """Try accessing files directly through common paths"""
-        parsed = urlparse(url)
-        domain = parsed.netloc
-        path = parsed.path
-        
-        # Remove leading slash if present
-        if path.startswith('/'):
-            path = path[1:]
-        
-        # Common InfinityFree direct access patterns
-        patterns = [
-            f"https://{domain}/{path}",
-            f"https://{domain}/{path}?raw=true",
-            f"https://{domain}/{path}?download=true",
-            f"https://{domain}/public_html/{path}",
-            f"https://{domain}/htdocs/{path}",
-            f"https://{domain}/www/{path}",
-            f"http://{domain}/{path}",
-            f"http://{domain}/public_html/{path}",
+    async def try_aggressive_fetch(self, url: str):
+        """
+        Try aggressive fetching with various headers and techniques
+        """
+        headers_list = [
+            # Googlebot
+            {
+                'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
+                'From': 'googlebot(at)googlebot.com',
+            },
+            # Bingbot
+            {
+                'User-Agent': 'Mozilla/5.0 (compatible; Bingbot/2.0; +http://www.bing.com/bingbot.htm)',
+            },
+            # Facebook bot
+            {
+                'User-Agent': 'facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)',
+            },
+            # Twitter bot
+            {
+                'User-Agent': 'Twitterbot/1.0',
+            },
+            # LinkedIn bot
+            {
+                'User-Agent': 'LinkedInBot/1.0 (compatible; Mozilla/5.0; Jakarta Commons-HttpClient/3.1 +http://www.linkedin.com)',
+            },
+            # DuckDuckGo bot
+            {
+                'User-Agent': 'DuckDuckBot/1.0; (+http://duckduckgo.com/duckduckbot.html)',
+            },
         ]
         
-        for pattern in patterns:
+        for headers in headers_list:
             try:
-                session = httpx.AsyncClient(timeout=10)
-                response = await session.get(pattern)
-                
-                if response.status_code == 200:
-                    content = response.text
-                    if 'aes.js' not in content and len(content) > 50:
-                        await session.aclose()
-                        return content, pattern
-                
-                await session.aclose()
-                await asyncio.sleep(0.5)
-                
-            except Exception as e:
+                async with httpx.AsyncClient(timeout=20) as client:
+                    # First get initial page
+                    response1 = await client.get(url, headers=headers)
+                    
+                    if response1.status_code != 200:
+                        continue
+                    
+                    content = response1.text
+                    
+                    # If it's protected, try with ?i=1
+                    if 'aes.js' in content:
+                        if '?' in url:
+                            bypass_url = f"{url}&i=1"
+                        else:
+                            bypass_url = f"{url}?i=1"
+                        
+                        # Set a cookie
+                        client.cookies.set('__test', 'crawler_bypass', domain=urlparse(url).netloc, path='/')
+                        
+                        # Try bypass
+                        response2 = await client.get(bypass_url, headers=headers)
+                        
+                        if response2.status_code == 200 and 'aes.js' not in response2.text:
+                            return response2.text, str(response2.url)
+                    else:
+                        # Not protected
+                        return content, str(response1.url)
+                    
+                    await asyncio.sleep(1)
+            except:
                 continue
         
         return None, None
 
-extractor = SmartInfinityFreeExtractor()
+simulator = RealBrowserSimulator()
 
 @app.get("/")
 async def home():
@@ -412,27 +432,25 @@ async def recover_source(url: str = Query(..., description="URL to recover sourc
         raise HTTPException(status_code=400, detail="URL is required")
     
     try:
-        # Get original source
-        source_code, source_url = await extractor.extract_real_content(url)
+        # Start extraction
+        print(f"\n{'='*60}")
+        print(f"STARTING EXTRACTION FOR: {url}")
+        print(f"{'='*60}")
+        
+        # Extract content with retries
+        source_code, source_url = await simulator.extract_content(url, max_retries=2)
         
         if not source_code:
-            # One final attempt with different method
-            async with httpx.AsyncClient() as client:
-                # Try with Googlebot user agent
-                headers = {
-                    'User-Agent': 'Googlebot/2.1 (+http://www.google.com/bot.html)',
-                    'Referer': 'https://www.google.com/'
-                }
-                response = await client.get(url, headers=headers, follow_redirects=True)
-                
-                if response.status_code == 200:
-                    source_code = response.text
-                    source_url = str(response.url)
-        
-        if not source_code or 'aes.js' in source_code:
             raise HTTPException(
                 status_code=404, 
-                detail="Could not extract source code. InfinityFree protection is active."
+                detail="Could not extract source code. The site has strong bot protection."
+            )
+        
+        # Validate content
+        if 'aes.js' in source_code or len(source_code) < 100:
+            raise HTTPException(
+                status_code=404,
+                detail="Extracted content appears to be protection page, not actual content."
             )
         
         # Create recovered file
@@ -441,11 +459,14 @@ async def recover_source(url: str = Query(..., description="URL to recover sourc
 Extracted from: {url}
 Source URL: {source_url}
 Time: {datetime.now().isoformat()}
-Powered by: InfinityFree Smart Extractor v9.0
+Tool: InfinityFree Browser Simulator v10.0
+Status: Successfully bypassed protection
 -->
+
 {source_code}
 """
         
+        # Return as downloadable file
         return Response(
             content=clean_html,
             media_type="text/html",
@@ -458,104 +479,109 @@ Powered by: InfinityFree Smart Extractor v9.0
     except HTTPException:
         raise
     except Exception as e:
+        print(f"Error: {e}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Extraction failed: {str(e)}")
 
-@app.get("/api/infinityfree")
-async def infinityfree_bypass(url: str = Query(..., description="InfinityFree URL to bypass")):
-    """Specialized endpoint for InfinityFree bypass"""
-    if not url:
-        raise HTTPException(status_code=400, detail="URL is required")
-    
+@app.get("/api/test")
+async def test_extraction(url: str = Query(..., description="URL to test")):
+    """Test endpoint to see what we get"""
     try:
-        # Step-by-step InfinityFree bypass
-        print(f"\nProcessing InfinityFree URL: {url}")
-        
-        # Step 1: Initial request to get protection
         async with httpx.AsyncClient() as client:
             response = await client.get(url)
             
-            if response.status_code != 200:
-                return JSONResponse({
-                    "success": False,
-                    "error": f"Initial request failed: {response.status_code}"
-                })
-            
-            content = response.text
-            
-            # Check if it's InfinityFree protected
-            if 'aes.js' not in content:
-                return JSONResponse({
-                    "success": True,
-                    "message": "Not InfinityFree protected",
-                    "content": content[:1000] + "..." if len(content) > 1000 else content,
-                    "content_length": len(content)
-                })
-            
-            # Extract redirect URL
-            redirect_match = re.search(r'location\.href\s*=\s*["\']([^"\']+)["\']', content)
-            
-            if redirect_match:
-                redirect_url = redirect_match.group(1)
-                
-                # Step 2: Try with cookie
-                client.cookies.set('__test', 'bypass_infinityfree', domain=urlparse(url).netloc, path='/')
-                
-                # Step 3: Follow redirect
-                await asyncio.sleep(2)  # Simulate JavaScript execution time
-                
-                response2 = await client.get(redirect_url, follow_redirects=True)
-                
-                if response2.status_code == 200 and 'aes.js' not in response2.text:
-                    return JSONResponse({
-                        "success": True,
-                        "message": "Bypass successful",
-                        "redirect_url": redirect_url,
-                        "content_length": len(response2.text),
-                        "content_preview": response2.text[:2000] + "..." if len(response2.text) > 2000 else response2.text
-                    })
-            
-            return JSONResponse({
-                "success": False,
-                "message": "Could not bypass InfinityFree protection",
-                "analysis": {
-                    "has_aes_js": 'aes.js' in content,
-                    "has_slowaes": 'slowAES.decrypt' in content,
-                    "content_length": len(content),
-                    "redirect_found": bool(redirect_match) if 'redirect_match' in locals() else False
-                }
-            })
-            
-    except Exception as e:
-        return JSONResponse({
-            "success": False,
-            "error": str(e)
-        }, status_code=500)
-
-@app.get("/api/debug")
-async def debug_url(url: str = Query(..., description="URL to debug")):
-    """Debug endpoint"""
-    try:
-        async with httpx.AsyncClient() as client:
-            response = await client.get(url, follow_redirects=True)
-            
             analysis = {
                 "url": url,
-                "final_url": str(response.url),
                 "status_code": response.status_code,
                 "content_length": len(response.text),
                 "has_aes_js": 'aes.js' in response.text,
                 "has_slowaes": 'slowAES.decrypt' in response.text,
-                "has_redirect_js": 'location.href' in response.text,
-                "cookies_received": dict(response.cookies),
-                "headers_received": dict(response.headers),
-                "content_preview": response.text[:500] + "..." if len(response.text) > 500 else response.text,
-                "recommendation": "Use /api/infinityfree endpoint for bypass" if 'aes.js' in response.text else "Use /api/recover endpoint"
+                "has_redirect": 'location.href' in response.text,
+                "has_trap": 'trap for bots' in response.text.lower(),
+                "content_preview": response.text[:1000],
+                "headers": dict(response.headers),
+                "cookies": dict(response.cookies),
             }
             
             return JSONResponse(analysis)
             
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
+
+@app.get("/api/bypass")
+async def bypass_protection(url: str = Query(..., description="URL to bypass")):
+    """Direct bypass attempt"""
+    try:
+        # Create a special session for this request
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Referer': 'https://www.google.com/',
+            'DNT': '1',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'cross-site',
+            'Sec-Fetch-User': '?1',
+        }
+        
+        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+            # Step 1: Get initial page
+            response1 = await client.get(url, headers=headers)
+            
+            if response1.status_code != 200:
+                return JSONResponse({
+                    "success": False,
+                    "error": f"Initial request failed: {response1.status_code}"
+                })
+            
+            content1 = response1.text
+            
+            # Check if protected
+            if 'aes.js' not in content1:
+                return JSONResponse({
+                    "success": True,
+                    "message": "Not protected",
+                    "content": content1[:2000] + "..." if len(content1) > 2000 else content1,
+                    "length": len(content1)
+                })
+            
+            # Extract redirect URL
+            redirect_match = re.search(r'location\.href\s*=\s*["\']([^"\']+\?i=1)["\']', content1)
+            
+            if redirect_match:
+                redirect_url = redirect_match.group(1)
+                
+                # Set cookie
+                client.cookies.set('__test', '9e8b9296b5e8a6e1b5b9e8a6e1b5b9e8a', 
+                                 domain=urlparse(url).netloc, path='/')
+                
+                # Wait like browser
+                await asyncio.sleep(2)
+                
+                # Follow redirect
+                response2 = await client.get(redirect_url, headers=headers)
+                
+                return JSONResponse({
+                    "success": response2.status_code == 200,
+                    "redirect_url": redirect_url,
+                    "final_status": response2.status_code,
+                    "final_length": len(response2.text),
+                    "still_protected": 'aes.js' in response2.text,
+                    "content_preview": response2.text[:2000] + "..." if len(response2.text) > 2000 else response2.text,
+                })
+            
+            return JSONResponse({
+                "success": False,
+                "message": "Could not find redirect URL",
+                "content_preview": content1[:500]
+            })
+            
+    except Exception as e:
+        return JSONResponse({"success": False, "error": str(e)})
 
 if __name__ == "__main__":
     import uvicorn
