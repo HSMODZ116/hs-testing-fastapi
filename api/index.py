@@ -9,17 +9,17 @@ from datetime import datetime
 
 app = FastAPI(
     title="Web Source Extractor API",
-    description="API to extract HTML source code from websites",
+    description="API to extract source code from websites",
     version="1.0.0"
 )
 
-class SimpleExtractor:
+class SourceExtractor:
     def __init__(self):
-        self.client = None
-    
-    async def get_client(self):
-        if not self.client:
-            self.client = httpx.AsyncClient(
+        self.session = None
+        
+    async def get_session(self):
+        if not self.session:
+            self.session = httpx.AsyncClient(
                 timeout=30.0,
                 follow_redirects=True,
                 headers={
@@ -28,218 +28,282 @@ class SimpleExtractor:
                     'Accept-Language': 'en-US,en;q=0.9',
                     'Accept-Encoding': 'gzip, deflate, br',
                     'Connection': 'keep-alive',
+                    'Upgrade-Insecure-Requests': '1',
                 }
             )
-        return self.client
-    
-    async def fetch_url(self, url: str):
-        """Fetch URL with multiple attempts"""
-        client = await self.get_client()
+        return self.session
         
-        # Try different methods
-        methods = [
-            # Method 1: Direct fetch
-            lambda: client.get(url),
+    async def fetch_with_protection_bypass(self, url: str):
+        """Try to bypass website protections"""
+        session = await self.get_session()
+        
+        # First try direct fetch
+        try:
+            response = await session.get(url)
+            content = response.text
             
-            # Method 2: With timestamp to bypass cache
-            lambda: client.get(url + f'?t={int(time.time())}'),
+            # Check if it's protected (InfinityFree or similar)
+            if 'aes.js' in content or 'slowAES.decrypt' in content:
+                # Try bypass methods
+                bypass_methods = [
+                    (url + '?i=1', {}),
+                    (url + '?nocache=1', {}),
+                    (url + f'?t={int(time.time())}', {}),
+                    (url.replace('https://', 'http://'), {}),
+                    (url, {'User-Agent': 'Googlebot/2.1 (+http://www.google.com/bot.html)'}),
+                    (url, {'User-Agent': 'Mozilla/5.0 (compatible; Bingbot/2.0; +http://www.bing.com/bingbot.htm)'}),
+                ]
+                
+                for bypass_url, headers in bypass_methods:
+                    try:
+                        response2 = await session.get(bypass_url, headers=headers)
+                        content2 = response2.text
+                        
+                        if 'aes.js' not in content2 and 'slowAES.decrypt' not in content2:
+                            return content2, str(response2.url)
+                    except:
+                        continue
+                        
+            return content, str(response.url)
             
-            # Method 3: Different user agent
-            lambda: client.get(url, headers={'User-Agent': 'Googlebot/2.1 (+http://www.google.com/bot.html)'}),
-            
-            # Method 4: HTTP instead of HTTPS
-            lambda: client.get(url.replace('https://', 'http://')) if url.startswith('https://') else None,
-            
-            # Method 5: With nocache parameter
-            lambda: client.get(url + '?nocache=1'),
+        except Exception as e:
+            print(f"Fetch error: {e}")
+            return None, None
+    
+    async def try_different_access_methods(self, url: str):
+        """Try different access methods"""
+        parsed = urlparse(url)
+        base_domain = parsed.netloc
+        path = parsed.path
+        
+        # Common access patterns
+        access_patterns = [
+            f"https://{base_domain}{path}",
+            f"http://{base_domain}{path}",
+            f"https://{base_domain}/public_html{path}",
+            f"https://{base_domain}/htdocs{path}",
+            f"https://{base_domain}/www{path}",
         ]
         
-        for method in methods:
+        session = await self.get_session()
+        
+        for pattern_url in access_patterns:
             try:
-                response = await method()
-                if response and response.status_code == 200:
+                response = await session.get(pattern_url, timeout=10)
+                if response.status_code == 200:
                     content = response.text
-                    
-                    # Check if it's valid content (not a bot trap)
+                    # Skip if it's just a bot trap
                     if self.is_valid_content(content):
-                        return content, str(response.url)
+                        return content, pattern_url
             except:
                 continue
         
         return None, None
     
     def is_valid_content(self, content: str):
-        """Check if content is valid HTML and not a bot trap"""
-        if not content or len(content.strip()) < 100:
+        """Check if content is valid (not a bot trap)"""
+        if not content or len(content.strip()) < 50:
             return False
         
-        content_lower = content.lower()
-        
-        # Check for bot traps
-        traps = [
+        # Check for common bot trap messages
+        trap_messages = [
             'this is a trap for bots',
-            'content loading...',
-            'please wait...',
+            'content loading',
+            'please wait',
             'you are being redirected',
             'loading...',
         ]
         
-        for trap in traps:
+        content_lower = content.lower()
+        for trap in trap_messages:
             if trap in content_lower:
                 return False
         
         # Check for basic HTML structure
-        has_html_structure = (
-            '<!doctype' in content_lower or 
-            '<html' in content_lower or 
-            '<body' in content_lower
-        )
+        if '<html' not in content_lower and '<!doctype' not in content_lower:
+            return False
         
-        return has_html_structure
+        return True
+    
+    async def get_source_code(self, url: str):
+        """Main function to get source code"""
+        print(f"🔍 Extracting source from: {url}")
+        
+        try:
+            # Method 1: Try protection bypass
+            content1, url1 = await self.fetch_with_protection_bypass(url)
+            
+            if content1 and self.is_valid_content(content1):
+                print("✅ Method 1 successful")
+                return content1, url1
+            
+            # Method 2: Try different access methods
+            content2, url2 = await self.try_different_access_methods(url)
+            
+            if content2:
+                print("✅ Method 2 successful")
+                return content2, url2
+            
+            # Method 3: Direct fetch as last resort
+            session = await self.get_session()
+            response = await session.get(url)
+            content = response.text
+            
+            if self.is_valid_content(content):
+                return content, str(response.url)
+            
+            return None, None
+            
+        except Exception as e:
+            print(f"❌ Extraction error: {e}")
+            return None, None
     
     async def close(self):
-        if self.client:
-            await self.client.aclose()
+        """Close session"""
+        if self.session:
+            await self.session.aclose()
 
-extractor = SimpleExtractor()
+# Create extractor instance
+extractor = SourceExtractor()
 
 @app.get("/")
 async def root():
-    """Root endpoint with basic info"""
+    """Root endpoint - redirect to API docs"""
     return JSONResponse({
         "message": "Web Source Extractor API",
         "endpoints": {
-            "extract": "/api/protected?url=URL",
+            "extract_source": "/api/protected?url=URL",
             "debug": "/api/debug?url=URL",
-            "health": "/health"
+            "info": "/api/info"
         },
-        "example": "/api/protected?url=https://example.com",
-        "author": "Haseeb Sahil",
-        "contact": "@HS_WebSource_Bot"
+        "usage": "GET /api/protected?url=https://example.com",
+        "example": "https://hs-websource-api.vercel.app/api/protected?url=https://zalim.kesug.com"
     })
 
 @app.get("/api/protected")
-async def extract_source(
-    url: str = Query(..., description="URL to extract source from"),
-    raw: bool = Query(False, description="Return raw response without headers")
-):
-    """
-    Extract HTML source code from a website
-    
-    Example: /api/protected?url=https://zalim.kesug.com
-    """
+async def extract_protected_source(url: str = Query(..., description="URL to extract source from")):
+    """Extract source code from protected websites"""
     if not url:
-        raise HTTPException(status_code=400, detail="URL parameter is required")
+        raise HTTPException(status_code=400, detail="URL is required")
     
-    # Add https:// if not present
+    # Validate URL
     if not url.startswith(('http://', 'https://')):
         url = 'https://' + url
     
     try:
-        source_code, source_url = await extractor.fetch_url(url)
+        # Get source code
+        source_code, source_url = await extractor.get_source_code(url)
         
         if not source_code:
             raise HTTPException(
-                status_code=404,
-                detail="Could not extract source code. The website might be protected or inaccessible."
+                status_code=404, 
+                detail="Could not extract source code. The website might be heavily protected or inaccessible."
             )
         
-        # Add metadata as HTML comment
-        metadata = f"""<!--
-Source: {url}
-Extracted URL: {source_url}
+        # Add metadata
+        clean_html = f"""<!--
+Extracted from: {url}
+Source URL: {source_url}
 Time: {datetime.now().isoformat()}
-Tool: Web Source Extractor API
+Powered by: Web Source Extractor API
 -->
+
+{source_code}
 """
         
-        full_content = metadata + "\n" + source_code
+        # Return as downloadable file
+        filename = f"extracted-source-{datetime.now().strftime('%Y%m%d-%H%M%S')}.html"
         
-        if raw:
-            # Return as plain text
-            return Response(
-                content=full_content,
-                media_type="text/plain",
-                headers={
-                    "Content-Type": "text/plain; charset=utf-8"
-                }
-            )
-        else:
-            # Return as downloadable HTML file
-            filename = f"extracted-{datetime.now().strftime('%Y%m%d-%H%M%S')}.html"
-            
-            return Response(
-                content=full_content,
-                media_type="text/html",
-                headers={
-                    "Content-Disposition": f"attachment; filename={filename}",
-                    "Content-Type": "text/html; charset=utf-8",
-                }
-            )
-            
+        return Response(
+            content=clean_html,
+            media_type="text/html",
+            headers={
+                "Content-Disposition": f"attachment; filename={filename}",
+                "Content-Type": "text/html; charset=utf-8",
+            }
+        )
+        
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Server error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Extraction failed: {str(e)}")
 
 @app.get("/api/debug")
 async def debug_url(url: str = Query(..., description="URL to debug")):
-    """Debug a URL to see what's returned"""
+    """Debug endpoint to see what's being returned"""
     if not url:
-        raise HTTPException(status_code=400, detail="URL parameter is required")
+        raise HTTPException(status_code=400, detail="URL is required")
     
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.get(url, follow_redirects=True)
+            response = await client.get(
+                url,
+                headers={
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                },
+                follow_redirects=True
+            )
             
-            content = response.text[:1000]  # First 1000 chars
+            content = response.text
+            headers = dict(response.headers)
             
-            analysis = {
+            # Check for protection patterns
+            is_protected = 'aes.js' in content or 'slowAES.decrypt' in content
+            is_bot_trap = any(phrase in content.lower() for phrase in [
+                'this is a trap for bots',
+                'content loading',
+                'please wait'
+            ])
+            
+            return JSONResponse({
                 "url": str(response.url),
-                "final_url": str(response.url),
                 "status_code": response.status_code,
-                "content_length": len(response.text),
-                "content_preview": content + ("..." if len(response.text) > 1000 else ""),
-                "headers": dict(response.headers),
-                "has_protection": any(x in response.text.lower() for x in ['aes.js', 'slowaes.decrypt']),
-                "is_bot_trap": any(x in response.text.lower() for x in [
-                    'trap for bots', 
-                    'content loading',
-                    'please wait'
-                ]),
-            }
-            
-            return JSONResponse(analysis)
+                "content_length": len(content),
+                "is_protected": is_protected,
+                "is_bot_trap": is_bot_trap,
+                "content_preview": content[:300] + "..." if len(content) > 300 else content,
+                "headers": {k: v for k, v in headers.items() if k.lower() not in ['set-cookie', 'cookie']}
+            })
             
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
-@app.get("/health")
-async def health_check():
-    """Health check endpoint"""
-    return JSONResponse({"status": "healthy", "timestamp": datetime.now().isoformat()})
-
-@app.get("/test")
-async def test_endpoint():
-    """Test endpoint with example"""
+@app.get("/api/info")
+async def api_info():
+    """Get API information"""
     return JSONResponse({
-        "message": "API is working",
-        "test_urls": [
-            "https://zalim.kesug.com",
-            "https://example.com",
-            "https://httpbin.org/html"
+        "name": "Web Source Extractor API",
+        "version": "1.0.0",
+        "description": "Extract HTML source code from websites including protected ones",
+        "author": "Haseeb Sahil",
+        "endpoints": [
+            {
+                "path": "/api/protected",
+                "method": "GET",
+                "description": "Extract source code from URL",
+                "parameters": {
+                    "url": "Website URL to extract from (required)"
+                },
+                "example": "/api/protected?url=https://example.com"
+            },
+            {
+                "path": "/api/debug",
+                "method": "GET",
+                "description": "Debug URL to see response",
+                "example": "/api/debug?url=https://example.com"
+            }
         ],
-        "usage": "GET /api/protected?url=YOUR_URL"
+        "contact": {
+            "telegram": "@HS_WebSource_Bot",
+            "channel": "@hsmodzofc2"
+        }
     })
 
 @app.on_event("shutdown")
 async def shutdown_event():
+    """Cleanup on shutdown"""
     await extractor.close()
 
-# For Vercel compatibility
+# For Vercel
 async def handler(request):
     return app
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
