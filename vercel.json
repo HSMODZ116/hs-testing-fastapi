@@ -4,14 +4,15 @@
     {
       "src": "api/index.py",
       "use": "@vercel/python",
-      "config": { "runtime": "python3.9" }
+      "config": {
+        "runtime": "python3.9"
+      }
     }
   ],
   "routes": [
-    { "src": "/(.*)", "dest": "api/index.py" }
-  ],
-  "functions": {
-    "api/index.py": { "memory": 1024, "maxDuration": 60 }
-  },
-  "installCommand": "pip install -r requirements.txt && playwright install chromium --with-deps"
+    {
+      "src": "/(.*)",
+      "dest": "api/index.py"
+    }
+  ]
 }
