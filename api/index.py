@@ -6,53 +6,24 @@ import re
 import time
 from urllib.parse import urljoin, urlparse
 from datetime import datetime
-from playwright.async_api import async_playwright
-import os
 
 app = FastAPI(
-    title="Web Source Extractor Pro",
-    description="Extract full source code from any website including JavaScript-rendered content",
-    version="10.0.0"
+    title="Web Source Extractor",
+    description="Extract HTML source code from any website",
+    version="3.0.0"
 )
 
-class WebSourceExtractor:
+class SmartSourceExtractor:
     def __init__(self):
-        self.browser = None
-        self.playwright = None
-        
-    async def init_browser(self):
-        """Initialize Playwright browser"""
-        if not self.playwright:
-            self.playwright = await async_playwright().start()
-            self.browser = await self.playwright.chromium.launch(
-                headless=True,
-                args=[
-                    '--disable-blink-features=AutomationControlled',
-                    '--no-sandbox',
-                    '--disable-setuid-sandbox',
-                    '--disable-dev-shm-usage',
-                    '--disable-accelerated-2d-canvas',
-                    '--no-first-run',
-                    '--no-zygote',
-                    '--disable-gpu'
-                ]
-            )
-        return self.browser
-        
-    async def extract_with_playwright(self, url: str):
-        """Extract content using headless browser for JS sites"""
-        print(f"🔍 Using Playwright to extract: {url}")
-        
-        browser = await self.init_browser()
-        
-        try:
-            context = await browser.new_context(
-                viewport={'width': 1920, 'height': 1080},
-                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                java_script_enabled=True,
-                bypass_csp=False,
-                ignore_https_errors=True,
-                extra_http_headers={
+        self.client = None
+    
+    async def get_client(self):
+        if not self.client:
+            self.client = httpx.AsyncClient(
+                timeout=30.0,
+                follow_redirects=True,
+                headers={
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
                     'Accept-Language': 'en-US,en;q=0.9',
                     'Accept-Encoding': 'gzip, deflate, br',
@@ -64,156 +35,108 @@ class WebSourceExtractor:
                     'Sec-Fetch-User': '?1',
                 }
             )
-            
-            page = await context.new_page()
-            
-            print("🌐 Loading page...")
-            await page.goto(url, wait_until='networkidle', timeout=60000)
-            
-            # Wait for JavaScript to execute
-            await asyncio.sleep(2)
-            
-            # Scroll to trigger lazy loading
-            await page.evaluate('window.scrollTo(0, document.body.scrollHeight)')
-            await asyncio.sleep(1)
-            
-            # Get fully rendered HTML
-            html = await page.content()
-            title = await page.title()
-            final_url = page.url
-            
-            await context.close()
-            
-            print(f"✅ Extracted: {title}")
-            return html, final_url
-            
-        except Exception as e:
-            print(f"❌ Playwright error: {e}")
-            return None, None
+        return self.client
     
-    async def extract_with_httpx(self, url: str):
-        """Try traditional HTTP extraction for static sites"""
+    async def extract_html(self, url: str):
+        """Smart HTML extraction with multiple methods"""
+        print(f"📡 Extracting: {url}")
+        
+        client = await self.get_client()
+        
+        # Method 1: Direct fetch
         try:
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-                'Accept-Language': 'en-US,en;q=0.9',
-                'Accept-Encoding': 'gzip, deflate, br',
-                'Connection': 'keep-alive',
-                'Upgrade-Insecure-Requests': '1',
-            }
+            response = await client.get(url)
+            content = response.text
             
-            async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
-                response = await client.get(url, headers=headers)
-                
-                if response.status_code == 200:
-                    return response.text, str(response.url)
-                    
+            # Check if it's a valid HTML page
+            if self.is_valid_html(content):
+                print("✅ Method 1: Direct fetch successful")
+                return content, str(response.url)
         except Exception as e:
-            print(f"❌ HTTPX error: {e}")
-            
-        return None, None
-    
-    async def bypass_infinityfree(self, url: str):
-        """Special bypass for InfinityFree protection"""
-        try:
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': '*/*',
-                'Accept-Encoding': 'gzip, deflate, br',
-                'Connection': 'keep-alive',
-            }
-            
-            # Try different InfinityFree bypass methods
-            urls_to_try = [
-                url,
-                url.replace('https://', 'http://'),
-                url + '?i=1',
-                url + '?nocache=1',
-                url + f'?t={int(time.time())}',
-            ]
-            
-            async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
-                for test_url in urls_to_try:
-                    try:
-                        print(f"🔄 Trying: {test_url}")
-                        response = await client.get(test_url, headers=headers)
-                        
-                        if response.status_code == 200:
-                            content = response.text
-                            # Check if it's protected
-                            if 'aes.js' not in content and 'slowAES.decrypt' not in content:
-                                print(f"✅ Bypassed protection!")
-                                return content, test_url
-                    except:
-                        continue
-                        
-        except Exception as e:
-            print(f"❌ InfinityFree bypass error: {e}")
-            
-        return None, None
-    
-    async def get_full_source(self, url: str):
-        """Main extraction method with multiple strategies"""
-        print(f"\n{'='*60}")
-        print(f"🎯 Extracting from: {url}")
-        print(f"{'='*60}")
+            print(f"❌ Method 1 failed: {e}")
         
-        # Check if it's InfinityFree
-        if 'infinityfree' in url.lower() or '.ifastnet' in url or '.epizy' in url:
-            print("\n[Method 1] InfinityFree bypass...")
-            content, source_url = await self.bypass_infinityfree(url)
-            if content:
-                return content, source_url
-        
-        # Try traditional HTTP first (fastest)
-        print("\n[Method 2] Traditional HTTP extraction...")
-        content, source_url = await self.extract_with_httpx(url)
-        
-        if content and self.is_valid_content(content):
-            print("✅ Success with HTTP!")
-            return content, source_url
-        
-        # Use Playwright for JavaScript sites
-        print("\n[Method 3] Headless browser extraction...")
-        content, source_url = await self.extract_with_playwright(url)
-        
-        if content:
-            print("✅ Success with Playwright!")
-            return content, source_url
-        
-        print("\n❌ All extraction methods failed!")
-        return None, None
-    
-    def is_valid_content(self, html: str):
-        """Check if HTML contains actual content"""
-        if not html or len(html.strip()) < 100:
-            return False
-        
-        trap_indicators = [
-            'This is a trap for bots',
-            'Content loading...',
-            'Please wait...',
-            'Loading...',
-            '<body></body>',
-            '<body> </body>',
+        # Method 2: Try with different user agents
+        user_agents = [
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1',
+            'Googlebot/2.1 (+http://www.google.com/bot.html)',
+            'Mozilla/5.0 (compatible; Bingbot/2.0; +http://www.bing.com/bingbot.htm)'
         ]
         
-        for indicator in trap_indicators:
-            if indicator.lower() in html.lower():
+        for ua in user_agents:
+            try:
+                headers = {'User-Agent': ua}
+                response = await client.get(url, headers=headers)
+                content = response.text
+                
+                if self.is_valid_html(content):
+                    print(f"✅ Method 2: UA {ua[:30]}... successful")
+                    return content, str(response.url)
+            except:
+                continue
+        
+        # Method 3: Try different URL variations
+        parsed = urlparse(url)
+        variations = [
+            url,
+            url.replace('https://', 'http://'),
+            url + '?i=1',
+            url + '?nocache=1',
+            url + f'?t={int(time.time())}',
+            url + '&t=' + str(int(time.time())),
+            f"http://{parsed.netloc}{parsed.path}",
+            f"https://{parsed.netloc}/public_html{parsed.path}",
+            f"https://{parsed.netloc}/htdocs{parsed.path}",
+        ]
+        
+        for var_url in variations:
+            try:
+                response = await client.get(var_url)
+                content = response.text
+                
+                if self.is_valid_html(content):
+                    print(f"✅ Method 3: URL variation successful")
+                    return content, str(response.url)
+            except:
+                continue
+        
+        print("❌ All methods failed")
+        return None, None
+    
+    def is_valid_html(self, content: str):
+        """Check if content is valid HTML"""
+        if not content or len(content.strip()) < 100:
+            return False
+        
+        # Check for HTML tags
+        html_indicators = ['<!DOCTYPE', '<html', '<head', '<body', '<div', '<p>']
+        has_html = any(indicator in content[:500].lower() for indicator in [i.lower() for i in html_indicators])
+        
+        if not has_html:
+            return False
+        
+        # Check for bot traps
+        trap_indicators = [
+            'this is a trap for bots',
+            'content loading...',
+            'please wait...',
+            'you are being redirected',
+        ]
+        
+        for trap in trap_indicators:
+            if trap in content[:1000].lower():
                 return False
         
         return True
     
     async def close(self):
-        """Cleanup resources"""
-        if self.browser:
-            await self.browser.close()
-        if self.playwright:
-            await self.playwright.stop()
+        if self.client:
+            await self.client.aclose()
 
 # Create extractor instance
-extractor = WebSourceExtractor()
+extractor = SmartSourceExtractor()
 
 @app.get("/")
 async def home():
@@ -223,13 +146,13 @@ async def home():
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Web Source Extractor Pro</title>
+        <title>Web Source Extractor</title>
         <style>
             * {
                 margin: 0;
                 padding: 0;
                 box-sizing: border-box;
-                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
             }
             
             body {
@@ -242,24 +165,22 @@ async def home():
             }
             
             .container {
-                background: rgba(255, 255, 255, 0.95);
+                background: white;
                 padding: 40px;
                 border-radius: 20px;
                 box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
                 width: 100%;
-                max-width: 900px;
-                backdrop-filter: blur(10px);
-                border: 1px solid rgba(255, 255, 255, 0.3);
+                max-width: 800px;
             }
             
             .header {
                 text-align: center;
-                margin-bottom: 40px;
+                margin-bottom: 30px;
             }
             
             h1 {
                 color: #333;
-                font-size: 3em;
+                font-size: 2.5em;
                 margin-bottom: 10px;
                 background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
                 -webkit-background-clip: text;
@@ -269,22 +190,21 @@ async def home():
             
             .tagline {
                 color: #666;
-                font-size: 1.2em;
-                margin-bottom: 30px;
+                font-size: 1.1em;
+                margin-bottom: 20px;
             }
             
             .input-group {
-                margin-bottom: 30px;
+                margin-bottom: 20px;
             }
             
             input[type="url"] {
                 width: 100%;
-                padding: 18px 25px;
-                font-size: 18px;
+                padding: 15px;
+                font-size: 16px;
                 border: 2px solid #ddd;
-                border-radius: 12px;
+                border-radius: 10px;
                 transition: all 0.3s;
-                background: white;
             }
             
             input[type="url"]:focus {
@@ -297,10 +217,10 @@ async def home():
                 background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
                 color: white;
                 border: none;
-                padding: 18px 40px;
-                font-size: 18px;
+                padding: 15px 30px;
+                font-size: 16px;
                 font-weight: bold;
-                border-radius: 12px;
+                border-radius: 10px;
                 cursor: pointer;
                 width: 100%;
                 transition: all 0.3s;
@@ -311,31 +231,21 @@ async def home():
             }
             
             .extract-btn:hover {
-                transform: translateY(-3px);
+                transform: translateY(-2px);
                 box-shadow: 0 10px 20px rgba(102, 126, 234, 0.4);
             }
             
-            .extract-btn:active {
-                transform: translateY(-1px);
-            }
-            
             .result {
-                margin-top: 30px;
-                padding: 20px;
-                border-radius: 12px;
+                margin-top: 20px;
+                padding: 15px;
+                border-radius: 10px;
                 display: none;
-                animation: slideDown 0.3s ease;
             }
             
-            @keyframes slideDown {
-                from {
-                    opacity: 0;
-                    transform: translateY(-10px);
-                }
-                to {
-                    opacity: 1;
-                    transform: translateY(0);
-                }
+            .loading {
+                background: #e3f2fd;
+                border: 2px solid #2196f3;
+                color: #1565c0;
             }
             
             .success {
@@ -350,77 +260,48 @@ async def home():
                 color: #c62828;
             }
             
-            .loading {
-                background: #e3f2fd;
-                border: 2px solid #2196f3;
-                color: #1565c0;
-            }
-            
             .features {
                 display: grid;
-                grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-                gap: 20px;
-                margin-top: 40px;
+                grid-template-columns: repeat(2, 1fr);
+                gap: 15px;
+                margin-top: 30px;
             }
             
             .feature {
-                background: white;
-                padding: 25px;
-                border-radius: 12px;
+                background: #f8f9fa;
+                padding: 15px;
+                border-radius: 10px;
                 text-align: center;
-                box-shadow: 0 5px 15px rgba(0,0,0,0.05);
-                border: 1px solid #eee;
-                transition: transform 0.3s;
-            }
-            
-            .feature:hover {
-                transform: translateY(-5px);
             }
             
             .feature-icon {
-                font-size: 2.5em;
-                margin-bottom: 15px;
-            }
-            
-            .feature h3 {
-                color: #333;
+                font-size: 2em;
                 margin-bottom: 10px;
-            }
-            
-            .feature p {
-                color: #666;
-                font-size: 0.95em;
-                line-height: 1.5;
             }
             
             .api-info {
                 background: #f8f9fa;
-                padding: 25px;
-                border-radius: 12px;
-                margin-top: 40px;
-                border: 1px solid #dee2e6;
-            }
-            
-            .api-info h3 {
-                color: #333;
-                margin-bottom: 15px;
+                padding: 15px;
+                border-radius: 10px;
+                margin-top: 20px;
             }
             
             code {
                 background: #333;
-                color: #fff;
-                padding: 12px 20px;
-                border-radius: 8px;
+                color: white;
+                padding: 10px;
+                border-radius: 5px;
                 display: block;
                 margin: 10px 0;
-                font-family: 'Courier New', monospace;
+                font-family: monospace;
                 overflow-x: auto;
+                font-size: 14px;
             }
             
             .test-urls {
                 display: flex;
                 gap: 10px;
-                margin-top: 20px;
+                margin-top: 15px;
                 flex-wrap: wrap;
             }
             
@@ -428,7 +309,7 @@ async def home():
                 background: #e3f2fd;
                 color: #1565c0;
                 border: 1px solid #bbdefb;
-                padding: 10px 20px;
+                padding: 8px 15px;
                 border-radius: 20px;
                 cursor: pointer;
                 transition: all 0.3s;
@@ -437,38 +318,23 @@ async def home():
             
             .test-btn:hover {
                 background: #bbdefb;
-                transform: translateY(-2px);
             }
             
             .footer {
                 text-align: center;
-                margin-top: 40px;
+                margin-top: 30px;
                 padding-top: 20px;
                 border-top: 1px solid #eee;
                 color: #666;
                 font-size: 0.9em;
-            }
-            
-            @media (max-width: 768px) {
-                .container {
-                    padding: 25px;
-                }
-                
-                h1 {
-                    font-size: 2.2em;
-                }
-                
-                input[type="url"], .extract-btn {
-                    padding: 15px;
-                }
             }
         </style>
     </head>
     <body>
         <div class="container">
             <div class="header">
-                <h1>🌐 Web Source Extractor Pro</h1>
-                <p class="tagline">Extract full HTML source code from any website, including JavaScript-rendered content</p>
+                <h1>🌐 Web Source Extractor</h1>
+                <p class="tagline">Extract HTML source code from any website</p>
             </div>
             
             <div class="input-group">
@@ -476,10 +342,9 @@ async def home():
                        placeholder="Enter website URL (e.g., https://example.com)" 
                        value="https://zalim.kesug.com">
                 <div class="test-urls">
-                    <button class="test-btn" onclick="setUrl('https://zalim.kesug.com')">Test Site 1</button>
-                    <button class="test-btn" onclick="setUrl('https://react.dev')">React</button>
-                    <button class="test-btn" onclick="setUrl('https://vuejs.org')">Vue.js</button>
-                    <button class="test-btn" onclick="setUrl('https://infinityfree.net')">InfinityFree</button>
+                    <button class="test-btn" onclick="setUrl('https://zalim.kesug.com')">Test Site</button>
+                    <button class="test-btn" onclick="setUrl('https://google.com')">Google</button>
+                    <button class="test-btn" onclick="setUrl('https://github.com')">GitHub</button>
                 </div>
             </div>
             
@@ -491,42 +356,38 @@ async def home():
             
             <div class="features">
                 <div class="feature">
-                    <div class="feature-icon">🚀</div>
+                    <div class="feature-icon">⚡</div>
                     <h3>Fast Extraction</h3>
-                    <p>Quickly extract HTML source from static and dynamic websites</p>
+                    <p>Quick HTML source extraction</p>
                 </div>
                 
                 <div class="feature">
                     <div class="feature-icon">🛡️</div>
-                    <h3>Bypass Protection</h3>
-                    <p>Bypass bot detection and InfinityFree protection systems</p>
-                </div>
-                
-                <div class="feature">
-                    <div class="feature-icon">⚡</div>
-                    <h3>JavaScript Support</h3>
-                    <p>Extract fully rendered content from React, Vue, Angular sites</p>
+                    <h3>Smart Bypass</h3>
+                    <p>Multiple bypass techniques</p>
                 </div>
                 
                 <div class="feature">
                     <div class="feature-icon">📥</div>
                     <h3>Direct Download</h3>
-                    <p>Download extracted source as clean HTML file instantly</p>
+                    <p>Download as HTML file</p>
+                </div>
+                
+                <div class="feature">
+                    <div class="feature-icon">🔧</div>
+                    <h3>Simple API</h3>
+                    <p>Easy to use API</p>
                 </div>
             </div>
             
             <div class="api-info">
                 <h3>📡 API Usage</h3>
-                <p>Use our API to extract source code programmatically:</p>
-                <code>GET /api/protected?url=https://example.com</code>
-                
-                <p>Example with curl:</p>
-                <code>curl "https://hs-websource-api.vercel.app/api/protected?url=https://zalim.kesug.com" --output source.html</code>
+                <code>GET /api/extract?url=https://example.com</code>
+                <code>curl "https://hs-websource-api.vercel.app/api/extract?url=https://example.com" -o source.html</code>
             </div>
             
             <div class="footer">
-                <p>Powered by FastAPI & Playwright • Developer: Haseeb Sahil</p>
-                <p>Telegram: @HS_WebSource_Bot • Channel: @hsmodzofc2</p>
+                <p>Developer: Haseeb Sahil | Telegram: @HS_WebSource_Bot</p>
             </div>
         </div>
         
@@ -544,27 +405,12 @@ async def home():
                     return;
                 }
                 
-                if (!url.startsWith('http')) {
-                    alert('Please enter a valid URL starting with http:// or https://');
-                    return;
-                }
-                
                 resultDiv.className = 'result loading';
-                resultDiv.innerHTML = `
-                    <div style="display: flex; align-items: center; gap: 15px;">
-                        <div style="font-size: 24px;">⏳</div>
-                        <div>
-                            <strong>Extracting source code...</strong>
-                            <p style="margin-top: 5px; font-size: 0.9em; opacity: 0.8;">
-                                This may take 10-20 seconds for JavaScript-heavy websites
-                            </p>
-                        </div>
-                    </div>
-                `;
+                resultDiv.innerHTML = '⏳ Extracting source code...';
                 resultDiv.style.display = 'block';
                 
                 try {
-                    const response = await fetch(`/api/protected?url=${encodeURIComponent(url)}`);
+                    const response = await fetch(`/api/extract?url=${encodeURIComponent(url)}`);
                     
                     if (response.ok) {
                         const blob = await response.blob();
@@ -573,67 +419,22 @@ async def home():
                         const downloadUrl = window.URL.createObjectURL(blob);
                         const a = document.createElement('a');
                         a.href = downloadUrl;
-                        a.download = `extracted-${new URL(url).hostname}.html`;
+                        a.download = `source-${new URL(url).hostname}.html`;
                         document.body.appendChild(a);
                         a.click();
                         document.body.removeChild(a);
                         
-                        // Show success message
                         resultDiv.className = 'result success';
-                        resultDiv.innerHTML = `
-                            <div style="display: flex; align-items: center; gap: 15px;">
-                                <div style="font-size: 24px;">✅</div>
-                                <div>
-                                    <strong>Source extracted successfully!</strong>
-                                    <p style="margin-top: 5px;">Download started automatically</p>
-                                </div>
-                            </div>
-                        `;
-                        
-                        // Show preview after download
-                        setTimeout(async () => {
-                            const text = await blob.text();
-                            const preview = text.substring(0, 500) + (text.length > 500 ? '...' : '');
-                            resultDiv.innerHTML += `
-                                <hr style="margin: 20px 0; border: none; border-top: 1px solid #4CAF50;">
-                                <details>
-                                    <summary style="cursor: pointer; font-weight: bold;">Preview first 500 characters</summary>
-                                    <pre style="margin-top: 10px; padding: 15px; background: white; border-radius: 8px; overflow: auto; font-size: 12px;">${escapeHtml(preview)}</pre>
-                                </details>
-                            `;
-                        }, 1000);
-                        
+                        resultDiv.innerHTML = '✅ Source extracted! Download started.';
                     } else {
                         const error = await response.text();
                         resultDiv.className = 'result error';
-                        resultDiv.innerHTML = `
-                            <div style="display: flex; align-items: center; gap: 15px;">
-                                <div style="font-size: 24px;">❌</div>
-                                <div>
-                                    <strong>Extraction Failed</strong>
-                                    <p style="margin-top: 5px;">${error}</p>
-                                </div>
-                            </div>
-                        `;
+                        resultDiv.innerHTML = `❌ Error: ${error}`;
                     }
                 } catch (error) {
                     resultDiv.className = 'result error';
-                    resultDiv.innerHTML = `
-                        <div style="display: flex; align-items: center; gap: 15px;">
-                            <div style="font-size: 24px;">❌</div>
-                            <div>
-                                <strong>Network Error</strong>
-                                <p style="margin-top: 5px;">${error.message}</p>
-                            </div>
-                        </div>
-                    `;
+                    resultDiv.innerHTML = `❌ Network error: ${error.message}`;
                 }
-            }
-            
-            function escapeHtml(text) {
-                const div = document.createElement('div');
-                div.textContent = text;
-                return div.innerHTML;
             }
             
             // Enter key support
@@ -648,20 +449,20 @@ async def home():
     """
     return HTMLResponse(html)
 
-@app.get("/api/protected")
-async def protected_extract(url: str = Query(..., description="URL to extract source from")):
+@app.get("/api/extract")
+async def extract_source(url: str = Query(..., description="URL to extract source from")):
     """Extract source code from any website"""
     if not url:
         raise HTTPException(status_code=400, detail="URL is required")
     
     try:
-        # Get full source code
-        source_code, source_url = await extractor.get_full_source(url)
+        # Get source code
+        source_code, source_url = await extractor.extract_html(url)
         
         if not source_code:
             raise HTTPException(
                 status_code=404, 
-                detail="Could not extract source code. The website might be blocking automated access or requires JavaScript."
+                detail="Could not extract source code. The website might be blocking access."
             )
         
         # Add metadata header
@@ -669,10 +470,9 @@ async def protected_extract(url: str = Query(..., description="URL to extract so
 Extracted from: {url}
 Source URL: {source_url}
 Time: {datetime.now().isoformat()}
-Powered by: Web Source Extractor Pro
+Powered by: Web Source Extractor
 Developer: Haseeb Sahil
 Channel: @hsmodzofc2
-Note: This is the fully rendered HTML including JavaScript-generated content
 -->
 
 {source_code}
@@ -683,7 +483,7 @@ Note: This is the fully rendered HTML including JavaScript-generated content
             content=clean_html,
             media_type="text/html",
             headers={
-                "Content-Disposition": f'attachment; filename="extracted-{urlparse(url).netloc}.html"',
+                "Content-Disposition": f'attachment; filename="source-{urlparse(url).netloc}.html"',
                 "Content-Type": "text/html; charset=utf-8",
             }
         )
@@ -693,42 +493,10 @@ Note: This is the fully rendered HTML including JavaScript-generated content
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Extraction failed: {str(e)}")
 
-@app.get("/api/debug")
-async def debug_url(url: str = Query(..., description="URL to debug")):
-    """Debug endpoint to see what's being returned"""
-    try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.get(url, follow_redirects=True)
-            
-            content = response.text
-            headers = dict(response.headers)
-            
-            # Check patterns
-            is_protected = 'aes.js' in content or 'slowAES.decrypt' in content
-            has_js = '<script' in content.lower()
-            
-            return JSONResponse({
-                "url": str(response.url),
-                "status_code": response.status_code,
-                "content_length": len(content),
-                "is_protected": is_protected,
-                "has_javascript": has_js,
-                "content_preview": content[:300] + "..." if len(content) > 300 else content,
-                "headers": {k: v for k, v in headers.items() if k.lower() not in ['set-cookie', 'cookie']}
-            })
-            
-    except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=500)
-
 @app.on_event("shutdown")
 async def shutdown_event():
-    """Cleanup on shutdown"""
     await extractor.close()
-
-# For Vercel deployment
-async def handler(request):
-    return app
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8000)=
