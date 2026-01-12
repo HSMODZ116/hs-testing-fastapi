@@ -1,265 +1,406 @@
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import Response, JSONResponse, HTMLResponse
 from fastapi.templating import Jinja2Templates
-from fastapi.staticfiles import StaticFiles
 import httpx
-import io
 import asyncio
 import re
 import time
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urlparse, urljoin, quote, unquote
 from datetime import datetime
-import base64
+import json
+import random
 import os
+import hashlib
+import base64
 
 app = FastAPI(
-    title="InfinityFree Direct Source Fetcher",
-    description="Directly fetch original source from InfinityFree bypassing all protection",
-    version="7.0.0"
+    title="InfinityFree Direct File Access",
+    description="Directly access uploaded files from InfinityFree hosting",
+    version="14.0.0"
 )
 
-# Configure templates
 templates = Jinja2Templates(directory=os.path.join(os.path.dirname(__file__), "..", "templates"))
 
-class DirectSourceFetcher:
+class DirectFileAccessor:
     def __init__(self):
-        self.session = None
-        self.cookies = {}
-        
-    async def get_session(self):
-        if not self.session:
-            self.session = httpx.AsyncClient(
-                timeout=30.0,
-                follow_redirects=True,
-                headers={
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-                    'Accept-Language': 'en-US,en;q=0.5',
-                    'Accept-Encoding': 'gzip, deflate, br',
-                    'Connection': 'keep-alive',
-                    'Upgrade-Insecure-Requests': '1',
-                    'Sec-Fetch-Dest': 'document',
-                    'Sec-Fetch-Mode': 'navigate',
-                    'Sec-Fetch-Site': 'none',
-                    'Sec-Fetch-User': '?1',
-                    'Cache-Control': 'no-cache',
-                    'Pragma': 'no-cache'
-                }
-            )
-        return self.session
-        
-    async def fetch_with_manual_cookies(self, url: str):
-        """Manual cookie handling for InfinityFree"""
-        session = await self.get_session()
-        
-        # First, try to get the page normally
-        print(f"Attempt 1: Direct fetch {url}")
-        response = await session.get(url)
-        
-        # Check if we got the protection page
-        content = response.text
-        if 'aes.js' in content and 'slowAES.decrypt' in content:
-            print("Got protection page, trying manual bypass...")
-            
-            # Extract the encrypted data
-            pattern = r'toNumbers\("([a-f0-9]+)"\)'
-            matches = re.findall(pattern, content)
-            
-            if len(matches) >= 3:
-                # These are the AES parameters
-                key_hex = matches[0]  # 32 chars = 16 bytes
-                iv_hex = matches[1]   # 32 chars = 16 bytes  
-                ciphertext_hex = matches[2]  # 32 chars = 16 bytes
-                
-                print(f"Found AES parameters: key={key_hex[:16]}..., iv={iv_hex[:16]}..., cipher={ciphertext_hex[:16]}...")
-                
-                # Try to simulate the cookie setting
-                # InfinityFree uses this cookie format: __test=decrypted_value
-                # We'll try to set a dummy cookie and retry
-                
-                # Add the cookie manually
-                session.cookies.set('__test', 'bypassed_manual_cookie')
-                
-                # Wait a bit
-                await asyncio.sleep(2)
-                
-                # Try accessing with ?i=1 parameter
-                if '?' in url:
-                    bypass_url = url + '&i=1'
-                else:
-                    bypass_url = url + '?i=1'
-                
-                print(f"Attempt 2: Accessing {bypass_url} with manual cookie")
-                response2 = await session.get(bypass_url)
-                
-                # Also try without protection
-                no_protection_url = url.replace('https://', 'http://')
-                print(f"Attempt 3: Trying HTTP version {no_protection_url}")
-                response3 = await session.get(no_protection_url)
-                
-                # Return the most promising response
-                if response2.status_code == 200 and 'aes.js' not in response2.text:
-                    return response2.text, str(response2.url)
-                elif response3.status_code == 200 and 'aes.js' not in response3.text:
-                    return response3.text, str(response3.url)
-                
-        return content, str(response.url)
+        self.cache = {}
     
-    async def try_different_paths(self, url: str):
-        """Try different common InfinityFree paths"""
+    async def get_file_content_directly(self, url: str):
+        """
+        Try to get file content directly without protection
+        InfinityFree stores files in specific directories
+        """
+        print(f"\n{'='*60}")
+        print(f"Direct File Access for: {url}")
+        print(f"{'='*60}")
+        
         parsed = urlparse(url)
-        base_domain = parsed.netloc
+        domain = parsed.netloc
         path = parsed.path
         
-        filename = path.split('/')[-1]
-        base_path = '/'.join(path.split('/')[:-1]) if '/' in path else ''
+        # Extract filename
+        filename = os.path.basename(path) if path else 'index.html'
         
-        # Common InfinityFree file locations
-        test_urls = [
-            f"https://{base_domain}{path}",
-            f"https://{base_domain}{path}?i=1",
-            f"https://{base_domain}{path}?nocache=1",
-            f"https://{base_domain}{path}?t={int(time.time())}",
-            f"http://{base_domain}{path}",
-            f"https://{base_domain}/public_html{path}",
-            f"https://{base_domain}/htdocs{path}",
-            f"https://{base_domain}/www{path}",
-            f"https://{base_domain}/~{base_domain.split('.')[0]}{path}",
-            f"https://{base_domain}/files{path}",
+        print(f"Domain: {domain}")
+        print(f"Path: {path}")
+        print(f"Filename: {filename}")
+        
+        # Common InfinityFree upload directories
+        common_dirs = [
+            '',  # Root
+            '/public_html',
+            '/htdocs', 
+            '/www',
+            '/files',
+            '/uploads',
+            '/web',
+            '/home',
         ]
         
-        session = await self.get_session()
+        # Try different access patterns
+        access_patterns = []
         
-        for test_url in test_urls:
+        # Pattern 1: Direct file access
+        for dir_path in common_dirs:
+            access_patterns.append(f"https://{domain}{dir_path}{path}")
+            access_patterns.append(f"http://{domain}{dir_path}{path}")
+        
+        # Pattern 2: With common extensions
+        for ext in ['.html', '.htm', '.php', '.txt', '.js', '.css']:
+            if not path.endswith(ext):
+                access_patterns.append(f"https://{domain}{path}{ext}")
+        
+        # Pattern 3: Try different filename variations
+        name_parts = filename.split('.')
+        if len(name_parts) > 1:
+            base_name = '.'.join(name_parts[:-1])
+            for ext in ['.html', '.htm', '.php']:
+                access_patterns.append(f"https://{domain}{os.path.dirname(path)}/{base_name}{ext}")
+        
+        # Pattern 4: Try user directory patterns (common in InfinityFree)
+        username = domain.split('.')[0] if '.' in domain else domain
+        user_dirs = [
+            f"https://{domain}/~{username}{path}",
+            f"https://{domain}/{username}{path}",
+            f"https://{domain}/home/{username}/public_html{path}",
+            f"https://{domain}/home/{username}/htdocs{path}",
+        ]
+        access_patterns.extend(user_dirs)
+        
+        # Remove duplicates
+        access_patterns = list(set(access_patterns))
+        
+        print(f"\nTrying {len(access_patterns)} direct access patterns...")
+        
+        for i, pattern_url in enumerate(access_patterns[:50]):  # Limit to 50
             try:
-                print(f"Trying path: {test_url}")
-                response = await session.get(test_url, timeout=10)
+                print(f"  [{i+1}] Trying: {pattern_url}")
                 
-                if response.status_code == 200:
-                    content = response.text
-                    # Check if it's the actual file and not protection
-                    if not ('aes.js' in content and 'slowAES.decrypt' in content):
-                        print(f"Found at: {test_url}")
-                        return content, test_url
-                        
-                await asyncio.sleep(1)
+                async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+                    # Try with different headers
+                    headers_list = [
+                        {'Accept': 'text/plain'},
+                        {'Accept': 'text/html'},
+                        {'Accept': '*/*'},
+                        {'User-Agent': 'curl/7.68.0'},  # Simple curl
+                        {'User-Agent': 'Wget/1.20.3'},   # Wget
+                    ]
+                    
+                    for headers in headers_list:
+                        try:
+                            response = await client.get(pattern_url, headers=headers)
+                            
+                            if response.status_code == 200:
+                                content = response.text
+                                
+                                # Check if it's actual content (not protection)
+                                if ('aes.js' not in content and 
+                                    'trap for bots' not in content.lower() and
+                                    'content loading' not in content.lower() and
+                                    len(content) > 10):  # Even small files are OK
+                                    
+                                    print(f"  ✓ Found at: {pattern_url}")
+                                    print(f"    Content length: {len(content)}")
+                                    print(f"    Content-Type: {response.headers.get('content-type', 'unknown')}")
+                                    
+                                    return content, pattern_url
+                            
+                            await asyncio.sleep(0.2)
+                        except:
+                            continue
+                    
             except Exception as e:
                 continue
         
         return None, None
     
-    async def extract_from_source_code(self, url: str):
-        """Try to extract from page source or view-source"""
-        try:
-            # Try view-source
-            view_source_url = f"view-source:{url}"
-            
-            # Actually, let's try with different headers
-            session = await self.get_session()
-            
-            # Try with different Accept headers
-            headers_list = [
-                {'Accept': 'text/html'},
-                {'Accept': '*/*'},
-                {'Accept': 'text/plain'},
-                {'User-Agent': 'Googlebot/2.1 (+http://www.google.com/bot.html)'},
-                {'User-Agent': 'Mozilla/5.0 (compatible; Bingbot/2.0; +http://www.bing.com/bingbot.htm)'}
-            ]
-            
-            for headers in headers_list:
-                try:
-                    response = await session.get(url, headers=headers, timeout=10)
+    async def try_file_download(self, url: str):
+        """
+        Try to trigger file download instead of viewing
+        """
+        print(f"\n[Method 2] Trying file download approach...")
+        
+        parsed = urlparse(url)
+        domain = parsed.netloc
+        path = parsed.path
+        
+        # Try download parameters
+        download_patterns = [
+            f"https://{domain}{path}?download",
+            f"https://{domain}{path}?download=1",
+            f"https://{domain}{path}?force_download",
+            f"https://{domain}{path}?raw",
+            f"https://{domain}{path}?raw=1",
+            f"https://{domain}{path}?source",
+            f"https://{domain}{path}?view=source",
+            f"https://{domain}{path}?show_source",
+        ]
+        
+        for pattern_url in download_patterns:
+            try:
+                print(f"  Trying download: {pattern_url}")
+                
+                async with httpx.AsyncClient(timeout=15) as client:
+                    response = await client.get(pattern_url)
+                    
                     if response.status_code == 200:
                         content = response.text
-                        if '<!DOCTYPE html>' in content and 'aes.js' not in content:
-                            return content, url
-                except:
-                    continue
-            
-            return None, None
-        except Exception as e:
-            print(f"Source extraction error: {e}")
-            return None, None
-    
-    async def get_original_source(self, url: str):
-        """Main function to get original source"""
-        print(f"\n{'='*60}")
-        print(f"Trying to extract original source from: {url}")
-        print(f"{'='*60}")
+                        
+                        # Check headers for download
+                        content_disposition = response.headers.get('content-disposition', '').lower()
+                        
+                        if ('attachment' in content_disposition or 
+                            'download' in content_disposition or
+                            ('aes.js' not in content and 
+                             'trap for bots' not in content.lower())):
+                            
+                            print(f"  ✓ Download successful: {pattern_url}")
+                            return content, pattern_url
+                    
+                    await asyncio.sleep(0.5)
+            except:
+                continue
         
-        try:
-            # Method 1: Try manual cookie bypass
-            print("\n[Method 1] Manual cookie bypass...")
-            content1, url1 = await self.fetch_with_manual_cookies(url)
-            
-            if content1 and 'aes.js' not in content1:
-                print("✓ Success with manual cookie bypass!")
-                return content1, url1
-            
-            # Method 2: Try different paths
-            print("\n[Method 2] Trying different InfinityFree paths...")
-            content2, url2 = await self.try_different_paths(url)
-            
-            if content2:
-                print("✓ Found via path exploration!")
-                return content2, url2
-            
-            # Method 3: Try to extract from source
-            print("\n[Method 3] Trying source code extraction...")
-            content3, url3 = await self.extract_from_source_code(url)
-            
-            if content3:
-                print("✓ Extracted from source!")
-                return content3, url3
-            
-            # Method 4: Last resort - try direct file access patterns
-            print("\n[Method 4] Last resort - direct file patterns...")
-            parsed = urlparse(url)
-            
-            # If we're getting protection page, the actual file might be at a different location
-            # InfinityFree sometimes serves from /~username/ paths
-            
-            # Try common username patterns
-            domain_parts = parsed.netloc.split('.')
-            if len(domain_parts) >= 2:
-                possible_user = domain_parts[0]  # e.g., 'hs-testing-tool' from 'hs-testing-tool.gt.tc'
+        return None, None
+    
+    async def try_directory_traversal(self, url: str):
+        """
+        Try to access files through directory traversal
+        """
+        print(f"\n[Method 3] Trying directory traversal...")
+        
+        parsed = urlparse(url)
+        domain = parsed.netloc
+        path = parsed.path
+        
+        # Common directory traversal patterns
+        traversal_patterns = []
+        
+        # Try to go up directories
+        dir_parts = path.split('/')
+        for i in range(1, min(4, len(dir_parts))):
+            parent_path = '/'.join(dir_parts[:-i])
+            if parent_path:
+                traversal_patterns.append(f"https://{domain}{parent_path}/")
+        
+        # Try common file locations
+        common_files = [
+            'index.html', 'index.php', 'index.htm',
+            'default.html', 'default.php',
+            'home.html', 'home.php',
+            'main.html', 'main.php',
+        ]
+        
+        for file in common_files:
+            traversal_patterns.append(f"https://{domain}/{file}")
+            traversal_patterns.append(f"https://{domain}/public_html/{file}")
+            traversal_patterns.append(f"https://{domain}/htdocs/{file}")
+        
+        for pattern_url in traversal_patterns:
+            try:
+                print(f"  Trying traversal: {pattern_url}")
                 
-                alt_urls = [
-                    f"https://{parsed.netloc}/~{possible_user}{parsed.path}",
-                    f"https://{parsed.netloc}/~{possible_user}/public_html{parsed.path}",
-                    f"https://{parsed.netloc}/~{possible_user}/htdocs{parsed.path}",
-                    f"https://{parsed.netloc}/~{possible_user}/www{parsed.path}",
-                    f"https://{parsed.netloc}/{possible_user}{parsed.path}",
-                ]
-                
-                session = await self.get_session()
-                for alt_url in alt_urls:
-                    try:
-                        print(f"Trying: {alt_url}")
-                        response = await session.get(alt_url, timeout=10)
+                async with httpx.AsyncClient(timeout=10) as client:
+                    response = await client.get(pattern_url)
+                    
+                    if response.status_code == 200:
+                        content = response.text
+                        
+                        if ('aes.js' not in content and 
+                            'trap for bots' not in content.lower() and
+                            len(content) > 100):
+                            
+                            print(f"  ✓ Found via traversal: {pattern_url}")
+                            return content, pattern_url
+                    
+                    await asyncio.sleep(0.5)
+            except:
+                continue
+        
+        return None, None
+    
+    async def extract_uploaded_file(self, url: str):
+        """
+        Main method to extract uploaded file
+        """
+        # Method 1: Direct file access
+        print(f"\n[Method 1] Direct file access...")
+        content1, url1 = await self.get_file_content_directly(url)
+        
+        if content1:
+            return content1, url1
+        
+        # Method 2: File download approach
+        print(f"\n[Method 2] File download...")
+        content2, url2 = await self.try_file_download(url)
+        
+        if content2:
+            return content2, url2
+        
+        # Method 3: Directory traversal
+        print(f"\n[Method 3] Directory traversal...")
+        content3, url3 = await self.try_directory_traversal(url)
+        
+        if content3:
+            return content3, url3
+        
+        # Method 4: Try to brute force common files
+        print(f"\n[Method 4] Brute forcing common files...")
+        content4, url4 = await self.brute_force_common_files(url)
+        
+        if content4:
+            return content4, url4
+        
+        print(f"\n✗ All file access methods failed")
+        return None, None
+    
+    async def brute_force_common_files(self, url: str):
+        """
+        Brute force common file names and locations
+        """
+        parsed = urlparse(url)
+        domain = parsed.netloc
+        path = parsed.path
+        
+        # Extract potential file name
+        if path and path != '/':
+            base_name = os.path.basename(path)
+            if '.' in base_name:
+                name_parts = base_name.split('.')
+                base = '.'.join(name_parts[:-1])
+                ext = name_parts[-1]
+            else:
+                base = base_name
+                ext = ''
+        else:
+            base = 'index'
+            ext = 'html'
+        
+        # Common file variations to try
+        file_variations = []
+        
+        # Try different extensions
+        for new_ext in ['html', 'htm', 'php', 'txt', 'js', 'css', 'xml', 'json']:
+            file_variations.append(f"{base}.{new_ext}")
+        
+        # Try different prefixes/suffixes
+        prefixes = ['', 'main.', 'home.', 'index.', 'default.', 'page.']
+        suffixes = ['', '.old', '.bak', '.backup', '.copy', '.original']
+        
+        for prefix in prefixes:
+            for suffix in suffixes:
+                for ext in ['html', 'htm', 'php']:
+                    file_variations.append(f"{prefix}{base}{suffix}.{ext}")
+        
+        # Remove duplicates
+        file_variations = list(set(file_variations))
+        
+        # Common directories
+        directories = ['', '/public_html', '/htdocs', '/www', '/files']
+        
+        print(f"Brute forcing {len(file_variations)} file names in {len(directories)} directories...")
+        
+        for directory in directories:
+            for filename in file_variations[:100]:  # Limit to 100
+                try:
+                    test_url = f"https://{domain}{directory}/{filename}"
+                    
+                    async with httpx.AsyncClient(timeout=5) as client:
+                        response = await client.get(test_url)
+                        
                         if response.status_code == 200:
                             content = response.text
-                            if 'aes.js' not in content:
-                                print(f"✓ Found at alternative URL: {alt_url}")
-                                return content, alt_url
-                    except:
-                        continue
-            
-            print("\n✗ All methods failed!")
-            return None, None
-            
-        except Exception as e:
-            print(f"\nError during extraction: {e}")
-            return None, None
+                            
+                            if ('aes.js' not in content and 
+                                'trap for bots' not in content.lower() and
+                                len(content) > 10):
+                                
+                                print(f"  ✓ Found: {test_url}")
+                                return content, test_url
+                        
+                        await asyncio.sleep(0.1)
+                except:
+                    continue
         
-        finally:
-            # Close session
-            if self.session:
-                await self.session.aclose()
-                self.session = None
+        return None, None
+    
+    async def analyze_file_structure(self, url: str):
+        """
+        Analyze the file structure to understand what's uploaded
+        """
+        parsed = urlparse(url)
+        domain = parsed.netloc
+        
+        analysis = {
+            'domain': domain,
+            'tested_urls': [],
+            'accessible_files': [],
+            'directory_listings': [],
+        }
+        
+        # Test common endpoints
+        test_endpoints = [
+            f"https://{domain}/",
+            f"https://{domain}/public_html/",
+            f"https://{domain}/htdocs/",
+            f"https://{domain}/www/",
+            f"https://{domain}/files/",
+            f"https://{domain}/uploads/",
+            f"https://{domain}/.git/",  # Git directory
+            f"https://{domain}/wp-admin/",  # WordPress
+            f"https://{domain}/wp-content/",  # WordPress content
+            f"https://{domain}/admin/",  # Admin panel
+            f"https://{domain}/cgi-bin/",  # CGI directory
+        ]
+        
+        for endpoint in test_endpoints:
+            try:
+                async with httpx.AsyncClient(timeout=10) as client:
+                    response = await client.get(endpoint)
+                    
+                    analysis['tested_urls'].append({
+                        'url': endpoint,
+                        'status': response.status_code,
+                        'content_type': response.headers.get('content-type'),
+                        'content_length': len(response.text),
+                    })
+                    
+                    # Check for directory listing
+                    if ('Index of' in response.text or 
+                        '[To Parent Directory]' in response.text or
+                        '<title>Index of' in response.text):
+                        analysis['directory_listings'].append(endpoint)
+                    
+                    await asyncio.sleep(0.5)
+            except Exception as e:
+                analysis['tested_urls'].append({
+                    'url': endpoint,
+                    'error': str(e)
+                })
+        
+        return analysis
 
-# Create fetcher instance
-fetcher = DirectSourceFetcher()
+file_accessor = DirectFileAccessor()
 
 @app.get("/")
 async def home():
@@ -267,24 +408,42 @@ async def home():
 
 @app.get("/api/recover")
 async def recover_source(url: str = Query(..., description="InfinityFree URL to recover source from")):
-    """Recover original source code from InfinityFree"""
+    """Recover original uploaded file content"""
     if not url:
         raise HTTPException(status_code=400, detail="URL is required")
     
     try:
-        # Get original source
-        source_code, source_url = await fetcher.get_original_source(url)
+        print(f"\n{'='*60}")
+        print(f"FILE RECOVERY REQUEST: {url}")
+        print(f"Time: {datetime.now().isoformat()}")
+        print(f"{'='*60}")
+        
+        # Extract uploaded file
+        source_code, source_url = await file_accessor.extract_uploaded_file(url)
         
         if not source_code:
-            raise HTTPException(status_code=404, detail="Could not recover source code. The file might be heavily protected or not accessible.")
+            raise HTTPException(
+                status_code=404, 
+                detail="Could not access the uploaded file. It might be protected or not directly accessible."
+            )
         
-        # Create a clean HTML file
+        # Check if it's trap content
+        if ('trap for bots' in source_code.lower() or 
+            'content loading' in source_code.lower()):
+            
+            raise HTTPException(
+                status_code=404,
+                detail="Found bot trap content. The actual file might be in a different location or protected."
+            )
+        
+        # Create recovered file
         clean_html = f"""<!DOCTYPE html>
 <!--
 Recovered from: {url}
-Source URL: {source_url}
+Actual Source URL: {source_url}
 Recovery Time: {datetime.now().isoformat()}
-Original InfinityFree file recovered successfully
+Tool: InfinityFree Direct File Access v14.0
+Note: This is the actual uploaded file content
 -->
 
 {source_code}
@@ -295,7 +454,7 @@ Original InfinityFree file recovered successfully
             content=clean_html,
             media_type="text/html",
             headers={
-                "Content-Disposition": "attachment; filename=recovered-original.html",
+                "Content-Disposition": "attachment; filename=recovered-original-file.html",
                 "Content-Type": "text/html; charset=utf-8",
             }
         )
@@ -303,35 +462,144 @@ Original InfinityFree file recovered successfully
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Recovery failed: {str(e)}")
+        print(f"Error: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"File recovery failed: {str(e)}")
 
-@app.get("/api/debug")
-async def debug_url(url: str = Query(..., description="URL to debug")):
-    """Debug endpoint to see what's being returned"""
+@app.get("/api/analyze-structure")
+async def analyze_structure(url: str = Query(..., description="URL to analyze file structure")):
+    """Analyze the file structure of an InfinityFree site"""
+    if not url:
+        raise HTTPException(status_code=400, detail="URL is required")
+    
     try:
-        session = httpx.AsyncClient(timeout=30.0)
-        response = await session.get(url, follow_redirects=True)
-        
-        content = response.text
-        headers = dict(response.headers)
-        
-        # Check for InfinityFree patterns
-        is_protected = 'aes.js' in content or 'slowAES.decrypt' in content
+        analysis = await file_accessor.analyze_file_structure(url)
         
         return JSONResponse({
-            "url": str(response.url),
-            "status_code": response.status_code,
-            "content_length": len(content),
-            "is_infinityfree_protected": is_protected,
-            "content_preview": content[:500] + "..." if len(content) > 500 else content,
-            "headers": headers,
-            "cookies": dict(response.cookies)
+            'analysis': analysis,
+            'recommendations': [
+                'Check directory listings for accessible files',
+                'Try common file locations like /public_html/, /htdocs/',
+                'Common files: index.html, index.php, main.html, etc.'
+            ]
         })
         
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
-# For local development
+@app.get("/api/find-files")
+async def find_files(url: str = Query(..., description="Base URL to find files")):
+    """Find accessible files on an InfinityFree site"""
+    if not url:
+        raise HTTPException(status_code=400, detail="URL is required")
+    
+    try:
+        parsed = urlparse(url)
+        domain = parsed.netloc
+        
+        # Common files to check
+        common_files = [
+            'index.html', 'index.php', 'index.htm',
+            'default.html', 'default.php',
+            'home.html', 'home.php',
+            'main.html', 'main.php',
+            'style.css', 'styles.css',
+            'script.js', 'main.js',
+            'config.php', 'settings.php',
+            'robots.txt', 'sitemap.xml',
+            '.htaccess', 'web.config',
+        ]
+        
+        # Directories to check
+        directories = ['', '/public_html', '/htdocs', '/www', '/files', '/uploads']
+        
+        results = []
+        
+        for directory in directories:
+            for filename in common_files:
+                test_url = f"https://{domain}{directory}/{filename}"
+                
+                try:
+                    async with httpx.AsyncClient(timeout=5) as client:
+                        response = await client.get(test_url)
+                        
+                        result = {
+                            'url': test_url,
+                            'status': response.status_code,
+                            'content_type': response.headers.get('content-type'),
+                            'content_length': len(response.text),
+                            'has_protection': 'aes.js' in response.text,
+                            'has_trap': 'trap for bots' in response.text.lower(),
+                            'is_accessible': (response.status_code == 200 and 
+                                            'aes.js' not in response.text and
+                                            'trap for bots' not in response.text.lower())
+                        }
+                        
+                        if result['is_accessible']:
+                            result['content_preview'] = response.text[:200] + "..." if len(response.text) > 200 else response.text
+                        
+                        results.append(result)
+                        
+                        await asyncio.sleep(0.1)
+                        
+                except Exception as e:
+                    results.append({
+                        'url': test_url,
+                        'error': str(e)
+                    })
+        
+        # Filter accessible files
+        accessible_files = [r for r in results if r.get('is_accessible')]
+        
+        return JSONResponse({
+            'domain': domain,
+            'tested_files': len(results),
+            'accessible_files': accessible_files,
+            'all_results': results
+        })
+        
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+@app.get("/api/debug-file")
+async def debug_file(url: str = Query(..., description="File URL to debug")):
+    """Debug file access"""
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            response = await client.get(url, follow_redirects=True)
+            
+            parsed = urlparse(url)
+            filename = os.path.basename(parsed.path) if parsed.path else 'unknown'
+            
+            debug_info = {
+                "requested_url": url,
+                "final_url": str(response.url),
+                "filename": filename,
+                "status_code": response.status_code,
+                "content_length": len(response.text),
+                "content_type": response.headers.get('content-type'),
+                "headers": dict(response.headers),
+                "has_aes_protection": 'aes.js' in response.text,
+                "has_trap_content": 'trap for bots' in response.text.lower() or 'content loading' in response.text.lower(),
+                "content_preview": response.text[:1000] + "..." if len(response.text) > 1000 else response.text,
+                "recommendations": [
+                    "Try accessing file through /public_html/ or /htdocs/ directory",
+                    "Try adding ?download or ?raw parameter",
+                    "Check if file exists with different extension (.html, .php, .htm)"
+                ]
+            }
+            
+            return JSONResponse(debug_info)
+            
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+@app.get("/api/protected")
+async def extract_protected_content(url: str = Query(..., description="Protected URL to extract from")):
+    """Legacy endpoint - redirects to recover"""
+    return await recover_source(url)
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("api.index:app", host="0.0.0.0", port=8000, reload=True)
